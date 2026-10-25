@@ -1,0 +1,7 @@
+test,what_we_measure,pass_target_proposed,result,pass_fail,notes
+"Sensor accuracy","Sensor reading vs weighed, oven-dried soil sample","Within ±5 percentage points",,,
+"Auto start and stop","Pump starts below dry limit, stops at target","10 of 10 cycles correct",,,
+"Voice and SMS command","Time from call or SMS to pump running; yes required","Under 30 s; no start without a yes",,,
+"Safety cut-offs","Timer, tank-full float, dry-run protection stop the pump","Stops every time in 10 trials",,,
+"Offline operation","Network unplugged; auto mode keeps running","Auto mode still works",,,
+"Solar supply","Panel energy per day vs pump energy used","Panel output covers the daily run",,,
