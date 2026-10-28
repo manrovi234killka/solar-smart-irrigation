@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm Voice Assistant</title>
+<style>
+  :root { --bg:#f6f7f2; --card:#fff; --ink:#1d2a1f; --muted:#5f6b60; --accent:#2f7d32; --off:#9e9e9e; --line:#dde3d8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111612; --card:#1a211b; --ink:#e6efe6; --muted:#9aa89b; --accent:#66bb6a; --off:#666; --line:#2b352c; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:760px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:1.4rem; margin:0 0 4px; }
+  p.sub { margin:0 0 18px; color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .tile .k { color:var(--muted); font-size:.82rem; }
+  .tile .v { font-size:1.35rem; font-weight:600; font-variant-numeric:tabular-nums; }
+  .on { color:var(--accent); } .offv { color:var(--off); }
+  section { margin-top:22px; }
+  #log { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; min-height:140px; max-height:340px; overflow:auto; }
+  .me { color:var(--muted); margin:6px 0 2px; } .bot { margin:0 0 8px; }
+  form { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  input, select, button { font:inherit; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); }
+  input { flex:1 1 220px; min-width:0; }
+  button { background:var(--accent); color:#fff; border:none; cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Farm Voice Assistant</h1>
+  <p class="sub">Live readings from the ESP32 and a text box that talks to the same assistant the phone line uses.</p>
+  <div class="grid" id="tiles"></div>
+  <section>
+    <div id="log"></div>
+    <form id="f">
+      <select id="lang">
+        <option value="en">English</option><option value="hi">हिंदी</option><option value="te">తెలుగు</option>
+        <option value="ta">தமிழ்</option><option value="kn">ಕನ್ನಡ</option>
+      </select>
+      <input id="t" placeholder="e.g. run the pump for 10 minutes" autocomplete="off">
+      <button>Send</button>
+    </form>
+  </section>
+</main>
+<script>
+const token = new URLSearchParams(location.search).get("token") || "";
+const q = token ? "?token=" + encodeURIComponent(token) : "";
+const fields = [
+  ["Pump", s => s.pump ? "ON" + (s.run_remaining_s ? ` (${Math.ceil(s.run_remaining_s/60)} min left)` : "") : "OFF", s => s.pump ? "on" : "offv"],
+  ["Soil moisture", s => s.soil_moisture_pct != null ? s.soil_moisture_pct + " %" : "–"],
+  ["Water tank", s => s.water_level_pct != null ? s.water_level_pct + " %" : "–"],
+  ["Battery", s => s.battery_v != null ? s.battery_v + " V" : "–"],
+  ["Solar panel", s => s.solar_v != null ? s.solar_v + " V" : "–"],
+  ["Temperature", s => s.temperature_c != null ? s.temperature_c + " °C" : "–"],
+  ["Controller", s => s.online ? "online" + (s.network ? " · " + s.network : "") : "offline", s => s.online ? "on" : "offv"],
+];
+function render(s) {
+  document.getElementById("tiles").innerHTML = fields.map(([k, v, c]) =>
+    `<div class="tile"><div class="k">${k}</div><div class="v ${c ? c(s) : ""}">${v(s)}</div></div>`).join("");
+}
+async function poll() {
+  try { render(await (await fetch("/api/status" + q)).json()); } catch {}
+}
+poll(); setInterval(poll, 2000);
+const log = document.getElementById("log");
+function add(cls, text) { const d = document.createElement("div"); d.className = cls; d.textContent = text; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+document.getElementById("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const t = document.getElementById("t"); const text = t.value.trim(); if (!text) return;
+  t.value = ""; add("me", "You: " + text);
+  try {
+    const r = await (await fetch("/api/chat" + q, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, lang: document.getElementById("lang").value, session: "dashboard" }) })).json();
+    add("bot", "Assistant: " + (r.reply || r.error)); if (r.device) render(r.device);
+  } catch (err) { add("bot", "Error: " + err.message); }
+});
+</script>
+</body>
+</html>
