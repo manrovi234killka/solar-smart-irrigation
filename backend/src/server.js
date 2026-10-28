@@ -6,6 +6,7 @@
 //   /voice/respond   -> speech text -> agent -> spoken reply -> listen again (pressing 1-5 switches language)
 //   /voice/result    -> used only when the agent takes longer than one webhook allows
 //   /voice/status    -> Twilio call-status callback, clears the call's conversation
+//   /sms             -> Twilio Messaging webhook: the same assistant over SMS
 
 import "dotenv/config";
 import express from "express";
@@ -15,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDevice } from "./device.js";
 import { createAgent } from "./agent.js";
+import { startRainSync } from "./weather.js";
 import { LANGUAGES, DEFAULT_LANG, SPEECH_HINTS, lang, langByDigit } from "./languages.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -26,7 +28,8 @@ const RESULT_WAIT_MS = 12000;
 
 const device = createDevice();
 const agent = createAgent(device);
-const { VoiceResponse } = twilio.twiml;
+startRainSync(device);
+const { VoiceResponse, MessagingResponse } = twilio.twiml;
 
 // ---- remembered caller languages (data/callers.json) ----
 const callersFile = process.env.CALLERS_FILE || path.join(here, "..", "data", "callers.json");
@@ -203,6 +206,27 @@ voice.post("/status", (req, res) => {
 });
 
 app.use("/voice", voice);
+
+// ---- SMS: same assistant, same read-back rule ("start pump 20 min" -> "Reply YES to confirm") ----
+app.post("/sms", validateTwilio, async (req, res) => {
+  const from = req.body.From;
+  const text = String(req.body.Body || "").trim();
+  const code = callers[from] || DEFAULT_LANG;
+  const twiml = new MessagingResponse();
+  if (ALLOWED_CALLERS.length && !ALLOWED_CALLERS.includes(from)) {
+    twiml.message("Sorry, this number is not registered with the farm.");
+  } else if (text) {
+    console.log(`[sms] from ${from}: "${text}"`);
+    const work = agent.handleTurn(`sms-${from}`, code, text, "sms").catch((err) => {
+      console.error("[sms] agent error:", err.message);
+      return { reply: lang(code).error };
+    });
+    const result = (await withTimeout(work, 13000)) || { reply: lang(code).error };
+    console.log(`[sms] reply: "${result.reply}"`);
+    twiml.message(result.reply);
+  }
+  res.type("text/xml").send(twiml.toString());
+});
 
 // ---- test API (no phone needed) ----
 function requireToken(req, res, next) {

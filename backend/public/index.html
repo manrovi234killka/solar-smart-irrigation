@@ -47,9 +47,10 @@
 const token = new URLSearchParams(location.search).get("token") || "";
 const q = token ? "?token=" + encodeURIComponent(token) : "";
 const fields = [
-  ["Pump", s => s.pump ? "ON" + (s.run_remaining_s ? ` (${Math.ceil(s.run_remaining_s/60)} min left)` : "") : "OFF", s => s.pump ? "on" : "offv"],
+  ["Pump", s => s.pump ? `ON · ${s.run_remaining_min} min left` : "OFF", s => s.pump ? "on" : "offv"],
   ["Soil moisture", s => s.soil_moisture_pct != null ? s.soil_moisture_pct + " %" : "–"],
-  ["Water tank", s => s.water_level_pct != null ? s.water_level_pct + " %" : "–"],
+  ["Auto mode", s => !s.auto_mode ? "off" : s.rain_forecast ? "on · rain skip" : s.auto_paused_min ? `paused ${s.auto_paused_min} min` : "on", s => s.auto_mode ? "on" : "offv"],
+  ["Floats", s => s.source_empty ? "source empty" : s.tank_full ? "tank full" : "OK", s => s.source_empty || s.tank_full ? "offv" : "on"],
   ["Battery", s => s.battery_v != null ? s.battery_v + " V" : "–"],
   ["Solar panel", s => s.solar_v != null ? s.solar_v + " V" : "–"],
   ["Temperature", s => s.temperature_c != null ? s.temperature_c + " °C" : "–"],

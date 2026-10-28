@@ -61,12 +61,23 @@ try {
 
   xml = await twilioPost("/voice/respond?lang=en", { SpeechResult: "run the pump for 10 minutes", Confidence: "0.9" });
   let s = await status();
-  check("timed run starts the pump", s.pump === true && s.run_remaining_s > 500, JSON.stringify(s));
-  check("reply mentions the duration", /10|ten/i.test(xml), xml);
+  check("start request is read back, pump not started yet", s.pump === false && /10/.test(xml) && /yes/i.test(xml), xml);
+
+  xml = await twilioPost("/voice/respond?lang=en", { SpeechResult: "yes" });
+  s = await status();
+  check("after yes the timed run starts", s.pump === true && s.run_remaining_min === 10, JSON.stringify(s));
 
   xml = await twilioPost("/voice/respond?lang=en", { SpeechResult: "turn the pump off" });
   s = await status();
-  check("pump turns off", s.pump === false, JSON.stringify(s));
+  check("pump stops immediately, no read-back", s.pump === false, JSON.stringify(s));
+
+  xml = await twilioPost("/voice/respond?lang=en", { SpeechResult: "start the pump" });
+  xml = await twilioPost("/voice/respond?lang=en", { SpeechResult: "no" });
+  s = await status();
+  check("saying no leaves the pump off", s.pump === false, JSON.stringify(s));
+
+  const sms = await (await fetch(`${base}/sms`, { method: "POST", body: new URLSearchParams({ From: "+10000000001", Body: "pump on 5 min" }) })).text();
+  check("SMS command gets a read-back reply", sms.includes("<Message>") && /5 minutes/.test(sms), sms);
 
   xml = await twilioPost("/voice/respond?lang=en", { SpeechResult: "what is the soil moisture" });
   check("status question gets moisture in the reply", /percent|%/i.test(xml), xml);
