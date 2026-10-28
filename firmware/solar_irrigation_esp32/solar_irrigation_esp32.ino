@@ -30,10 +30,9 @@
   HardwareSerial SerialAT(1);
   TinyGsm modem(SerialAT);
   #if MQTT_TLS
-    TinyGsmClientSecure netClient(modem);  // SIM7600 only; SIM800 TLS is unreliable
-  #else
-    TinyGsmClient netClient(modem);
+    #error "MQTT_TLS is supported on Wi-Fi only (TinyGSM has no TLS for these modems). Use MQTT_TLS 0 with a long random DEVICE_ID, or a password-protected broker on port 1883."
   #endif
+  TinyGsmClient netClient(modem);
 #else
   #include <WiFi.h>
   #if MQTT_TLS

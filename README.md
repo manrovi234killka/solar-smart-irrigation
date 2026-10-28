@@ -1,224 +1,120 @@
-# Solar Smart Irrigation: Phone-Call Voice Assistant
+# Solar Smart Irrigation
 
-A farmer dials an ordinary phone number and says things like *"turn the pump on"*, *"run the pump for 10 minutes"* or *"what's the soil moisture?"*, in **English, Hindi, Telugu, Tamil or Kannada**. The assistant understands, switches the pump on the solar-powered ESP32 controller, and answers by voice.
+The right amount of water, at the right time, powered by the sun and controlled by a phone call.
 
-The farmer needs no smartphone, no app and no internet: any basic phone works.
+A low-cost prototype for small farms. Soil sensors decide when to water, and a solar-powered pump does the work. The farmer controls it from any basic phone, by voice call or SMS, in Telugu, Hindi, English, Tamil or Kannada. An AI assistant answers questions about the field and the weather.
+
+**Status:** the voice and SMS assistant (`backend/`) runs locally and passes its automated call-flow test, and the ESP32 controller (`firmware/solar_irrigation_esp32/`) compiles. Neither has been tested on real hardware or a live phone line yet, and no measured results exist. The evaluation template in `docs/` is blank on purpose.
+
+## How it works
+
+1. **Sense:** capacitive soil moisture sensors read each field zone.
+2. **Decide:** the ESP32 controller combines moisture, the rain forecast and crop rules. A rain forecast skips watering. Weather advice never starts the pump on its own.
+3. **Water:** a solar-powered pump runs only as long as needed. A timer, float switches and an optional flow sensor stop every run.
+4. **Talk:** the farmer calls or sends an SMS. The assistant reads every start command back and waits for a clear yes. Stop commands work at once.
 
 ```
- Farmer's phone ──call──▶ Twilio number ──webhook──▶ Backend (Node.js) ──MQTT──▶ ESP32 ──▶ relay ──▶ pump
-                 ◀─voice── speech-to-text,          Claude decides which        Wi-Fi or      sensors: soil,
-                           text-to-speech           tool to call                SIM7600/800   tank, battery,
-                                                                                4G/2G         solar, temperature
+Farmer's basic phone (voice call or SMS, 5 languages)
+                      |
+        Twilio number  ->  AI assistant (Claude) + weather forecast
+                      |
+                 Cloud (MQTT)
+                      |
+   ESP32 controller (works offline; Wi-Fi or SIM800L/SIM7600)
+                      |
+   Moisture sensors · Solar power · Pump, relay and float switches
 ```
 
-| Part | What it does |
+## Repository layout
+
+| Path | What is in it |
 |---|---|
-| **Twilio Programmable Voice** | Phone number, keypad language menu, speech recognition (`<Gather input="speech">`), spoken replies (`<Say>`) |
-| **Claude (`claude-opus-5-5`)** | Understands the request in any of the 5 languages and calls tools: `get_farm_status`, `set_pump`, `run_pump_for_minutes`, `end_call` |
-| **MQTT broker** | Delivers commands to the ESP32 and readings back. The public HiveMQ broker works out of the box |
-| **ESP32 firmware** | Drives the pump relay, reads sensors, runs timed runs locally, and has dry-run protection, a max on-time and a boot-off failsafe |
+| `backend/` | Voice and SMS assistant: Twilio webhooks, Claude tool use, MQTT link to the ESP32, weather, live dashboard, simulator and tests |
+| `firmware/solar_irrigation_esp32/` | ESP32 sketch: auto mode, rain skip, run timer, float cut-offs, MQTT over Wi-Fi or SIM800L/SIM7600. Settings live in `config.h` |
+| `docs/voice_assistant_setup.md` | Setup for the phone number, backend and ESP32, plus a step-by-step test plan |
+| `docs/evaluation_results_template.csv` | Six bench tests with proposed pass targets and blank result columns |
+| `docs/narration_script.md` | Script for the project film |
+| `presentation/Solar_Smart_Irrigation_Final.pptx` | 15-slide deck with embedded video clips |
+| `media/CREDITS.md` | Photo and video credits and licences |
 
-## Folder layout
+## Build it in eight steps
 
-```
-backend/                 Node.js server (Twilio webhooks, Claude agent, MQTT link, test dashboard)
-  src/server.js          call flow + /api test endpoints
-  src/agent.js           Claude tool-use loop (plus a keyword fallback with no AI)
-  src/device.js          MQTT link to the ESP32, plus a built-in simulated ESP32
-  src/languages.js       language menu, voices and fixed phrases for en/hi/te/ta/kn
-  scripts/smoke-test.js  plays a whole call through the webhooks (npm test)
-  scripts/fake-esp32.js  pretend ESP32 speaking the real MQTT protocol
-  scripts/chat.js        type to the assistant from the terminal
-  public/index.html      live dashboard + text chat (http://localhost:3000)
-firmware/solar_irrigation_esp32/
-  solar_irrigation_esp32.ino   ESP32 sketch
-  config.h                     Wi-Fi/SIM, broker, pins, calibration, safety limits
-```
+Always switch everything off while wiring, check polarity twice, and have a qualified electrician do any mains wiring.
 
----
+1. **Gather the parts.** ESP32 board, capacitive soil sensors, 12 V pump with relay module, 10-20 W solar panel, charge controller, 12 V battery, buck converter (12 V to 5 V), two float switches, SIM800L module. Optional: flow sensor, DHT22.
+2. **Wire the power chain.** Panel to charge controller to 12 V battery, with a fuse on the battery. Buck converter from the battery to the ESP32 (5 V). The pump takes power from the battery only through the relay.
+3. **Connect the soil sensor.** VCC to 3V3, GND to GND, AOUT to GPIO34. Calibrate: dry air is 0 %, a glass of water is 100 %. Put both raw readings into `config.h`. The firmware averages 10 readings.
+4. **Relay, pump and floats.** GPIO26 drives the relay input (relay VCC to 5 V, GND to GND). Battery positive to relay COM, relay NO to the pump, pump return to the battery. Tank-full float between GPIO27 and GND, source-empty float between GPIO25 and GND (internal pull-ups).
+5. **Program the logic.** Set Wi-Fi or SIM, a unique `DEVICE_ID`, the calibration and the crop limits in `firmware/solar_irrigation_esp32/config.h`, then flash the sketch. Test with the pump unplugged first.
+6. **Cloud.** The ESP32 publishes readings and pump status over MQTT and listens for commands. It keeps its own safety rules, so auto mode, timers and float cut-offs still work when the network is down.
+7. **Voice and SMS.** Run `backend/` and connect a Twilio phone number to it; see [docs/voice_assistant_setup.md](docs/voice_assistant_setup.md). For farms without Wi-Fi, the SIM800L (with its own supply that can deliver short current bursts) carries the controller's data instead.
+8. **Test and calibrate.** Run the six tests below and record every result. The setup guide has a detailed test plan for each one.
 
-## 1. Run the backend locally (10 minutes, no hardware)
+### Pin map
 
-Needs Node.js 20 or newer.
-
-```bash
-cd backend
-npm install
-copy .env.example .env
-npm test
-```
-
-`npm test` starts the server with the simulated ESP32 and the keyword agent, then plays a call through the Twilio webhooks: language menu, timed run, pump off, moisture question, silence, language switch, hang-up. Every check should print `PASS`.
-
-Now add Claude. Create an API key at <https://platform.claude.com>, put it in `backend/.env` as `ANTHROPIC_API_KEY=...`, then:
-
-```bash
-npm start
-```
-
-Open <http://localhost:3000> to see the live readings tiles and a text box. Try *"run the pump for 10 minutes"*, *"is the soil dry?"* or *"पंप बंद करो"*. Or chat in a second terminal:
-
-```bash
-npm run chat -- te
-```
-
-Useful `.env` settings (all listed in `.env.example`):
-
-| Setting | Meaning |
+| Signal | ESP32 pin |
 |---|---|
-| `SIMULATOR=true` | Built-in fake ESP32. Set it to `false` once the real ESP32 (or `npm run fake-esp32`) is connected |
-| `AI_EFFORT=low` | How hard Claude thinks. `low` keeps phone replies fast; try `medium` if answers seem careless |
-| `AI_MODE=rules` | Keyword matching with no AI. A backup if the venue internet is too slow for the API (replies in English only) |
-| `ALLOWED_CALLERS` | Comma-separated phone numbers allowed to control the pump, for example `+919876543210` |
-| `API_TOKEN` | Protects `/api/*` and the dashboard (`http://.../?token=...`) once the server is on the internet |
+| Soil sensor AOUT | GPIO34 (analogue input) |
+| Relay IN | GPIO26 |
+| Tank-full float | GPIO27 to GND |
+| Source-empty float | GPIO25 to GND |
+| Battery voltage divider (optional) | GPIO32 |
+| Solar voltage divider (optional) | GPIO33 |
+| DHT22 data (optional) | GPIO4 |
+| SIM800L TX / RX (no Wi-Fi) | GPIO16 / GPIO17 |
 
-The Claude requests also enable Anthropic's server-side refusal fallback (`fallbacks: "default"`), so a rare declined request is retried on another model instead of failing the call.
+### Indicative parts cost
 
----
-
-## 2. Connect a real phone number (Twilio)
-
-1. **Make the backend reachable from the internet** with ngrok:
-   ```bash
-   winget install ngrok.ngrok
-   ngrok config add-authtoken <token from dashboard.ngrok.com>
-   ngrok http 3000
-   ```
-   Copy the `https://....ngrok-free.app` address into `PUBLIC_URL` in `.env` and restart `npm start`.
-2. **Create a Twilio account** at <https://www.twilio.com/try-twilio> and get a phone number with **Voice** capability (Console → Phone Numbers → Buy a number).
-   - A **trial** account plays a short trial message first and only accepts calls from phone numbers you have verified (Console → Phone Numbers → Verified Caller IDs). Verify the phones you will demo with.
-   - Indian (+91) Twilio numbers need regulatory documents and can take days to approve. For the hackathon, a US/UK number called from a verified phone is fastest. For real farmers, an Indian number or a local telephony provider avoids international call charges.
-3. **Point the number at the backend**: Console → Phone Numbers → *your number* → Voice Configuration:
-   - *A call comes in*: **Webhook**, `https://<your-ngrok>/voice/incoming`, **HTTP POST**
-   - *Call status changes*: `https://<your-ngrok>/voice/status`
-4. Copy your **Auth Token** (Console home page) into `TWILIO_AUTH_TOKEN` in `.env`. The server then rejects webhook calls that are not signed by Twilio. `PUBLIC_URL` must match the ngrok address exactly for this check to pass.
-5. Call the number. A first-time caller hears the language menu (1 English, 2 Hindi, 3 Telugu, 4 Tamil, 5 Kannada). The choice is remembered for that phone number, and pressing 1–5 at any time during a call switches language.
-
-**Voices:** the defaults are Twilio's Google voices (`Google.hi-IN-Standard-A` and so on). If Twilio reports an invalid voice, pick another from Console → Voice → Text-to-speech and set `VOICE_EN`, `VOICE_HI`, `VOICE_TE`, `VOICE_TA` or `VOICE_KN` in `.env`.
-
-**Slow replies:** if Claude takes longer than about 9 s, the caller hears "One moment" and the answer follows, so Twilio's 15-second webhook limit is never hit.
-
----
-
-## 3. Build the ESP32 controller
-
-### Arduino IDE setup
-
-1. Arduino IDE 2 → File → Preferences → *Additional boards manager URLs*: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
-2. Boards Manager → install **esp32 by Espressif Systems**. Select board **ESP32 Dev Module**.
-3. Library Manager → install **PubSubClient** (Nick O'Leary), **ArduinoJson** (v7), **DHT sensor library** (Adafruit, accept *Install all* for Adafruit Unified Sensor), and **TinyGSM** (only needed for the SIM module).
-4. Open `firmware/solar_irrigation_esp32/solar_irrigation_esp32.ino` and edit `config.h`:
-   - `WIFI_SSID` / `WIFI_PASSWORD`, or set `USE_GSM 1` and your SIM's `GSM_APN`
-   - `DEVICE_ID`: something unique like `farm-ravi-7k3q`, and **the same value in `backend/.env`**
-   - `FAKE_SENSORS 1` if you only have the relay wired (the readings are then realistic made-up values, fine for a demo)
-5. Upload, then open Serial Monitor at 115200 baud. You should see `[mqtt] connected`.
-6. In `backend/.env` set `SIMULATOR=false` and restart. The dashboard tiles now show the ESP32's readings and *Controller: online · wifi*.
-
-### Wiring
-
-| ESP32 pin | Connects to | Notes |
-|---|---|---|
-| GPIO 26 | Relay module IN | Relay VCC to 5V (VIN), GND to GND. `RELAY_ACTIVE_LOW 1` suits most blue relay boards |
-| GPIO 34 | Capacitive soil moisture sensor AOUT | Sensor VCC 3.3V. Calibrate `SOIL_DRY_RAW` (in air) and `SOIL_WET_RAW` (in water) |
-| GPIO 35 | Water level sensor signal (analog), or float switch to GND | For a float switch set `WATER_FLOAT_SWITCH 1` and add a 10k pull-up to 3.3V (GPIO 35 has no internal pull-up) |
-| GPIO 32 | Battery divider midpoint | 100k from battery + to pin, 22k from pin to GND (12 V battery → about 2.2 V) |
-| GPIO 33 | Solar panel divider midpoint | 100k from panel + to pin, 15k from pin to GND (22 V open circuit → about 2.9 V) |
-| GPIO 27 | DHT11/DHT22 data | 10k pull-up to 3.3V if your module lacks one. Set `DHT_TYPE` |
-| GPIO 16 / 17 | SIM7600/SIM800L TX / RX | Only with `USE_GSM 1`. The modem needs its own supply (see below) |
-| GPIO 2 | On-board LED | Lit while connected to the broker |
-
-**Power and safety**
-
-- Power the ESP32 from the solar battery through a 5 V buck converter into VIN, not straight from 12 V.
-- Analog pins must never see more than 3.3 V. Measure each divider output with a multimeter before connecting it.
-- The relay contacts switch the **pump's** supply. A small 12 V DC pump can go through the relay directly. For an AC or high-current motor, the relay should drive a properly rated contactor, wired by someone qualified for mains work.
-- SIM7600 and SIM800L modules draw up to 2 A in bursts. Give them their own buck converter (about 4.0 V for SIM800L, or what your SIM7600 board specifies) with a large capacitor (≥1000 µF) near the module, and share GND with the ESP32. Powering them from the ESP32's 3.3 V pin causes endless resets.
-- Use only ADC1 pins (32–39) for analog sensors; ADC2 pins stop working while Wi-Fi is on.
-
-### Built-in protections (they work even with no network)
-
-- The pump is forced **off at boot**.
-- A **timed run** stops itself on the ESP32's own clock, even if the phone line, server or internet drops.
-- **Dry-run protection**: refuses to start, or stops, when the tank is below `MIN_WATER_PCT`. The assistant explains this to the caller.
-- An **untimed "on"** stops after `MAX_ON_MINUTES`.
-- If the ESP32 loses power or network, the broker publishes `offline` and the assistant tells the caller the controller is offline.
-
-### Farms without Wi-Fi
-
-Set `USE_GSM 1`, choose `GSM_MODEM_SIM7600` (4G) or `GSM_MODEM_SIM800` (2G; check that 2G still works in your area), set the APN for the SIM (for example `jionet`, `airtelgprs.com`, `bsnlnet`, or `www` for Vi), and use a SIM with a small data pack. MQTT uses very little data: a few MB a month at the default 10-second reporting interval.
-
----
-
-## 4. Test plan
-
-Run these in order. Each row says what to do and what should happen.
-
-### A. Backend only (no phone, no hardware)
-
-| # | Do | Expect |
-|---|---|---|
-| A1 | `npm test` | All 10 checks `PASS` |
-| A2 | `npm start` with the API key set; dashboard → *"what's the status?"* | Spoken-style reply with real numbers from the simulator; console shows `[agent] get_farm_status` |
-| A3 | Dashboard → *"run the pump for 2 minutes"* | Pump tile shows *ON (2 min left)*; it turns OFF by itself after 2 minutes |
-| A4 | Dashboard, Hindi selected → *"पंप चालू करो"* | Reply in Hindi (Devanagari); pump ON |
-| A5 | Repeat A4 in Telugu, Tamil and Kannada | Replies in each language's script |
-| A6 | Add `SIM_MIN_WATER_PCT=90` to `.env` (simulated tank is about 78% full), restart, ask to turn the pump on | Refused; the assistant explains the tank is too low |
-
-### B. MQTT link (still no hardware)
-
-| # | Do | Expect |
-|---|---|---|
-| B1 | `.env`: `SIMULATOR=false` and a unique `DEVICE_ID`. Terminal 1: `npm run fake-esp32`. Terminal 2: `npm start` | Server log `[mqtt] connected`; dashboard *Controller: online · fake-esp32* |
-| B2 | *"pump on for 5 minutes"* | fake-esp32 logs the `run` command; dashboard shows ON |
-| B3 | Stop fake-esp32 (Ctrl+C), wait about 1 minute, ask for the status | Assistant says the controller is offline |
-
-### C. ESP32 on the bench
-
-| # | Do | Expect |
-|---|---|---|
-| C1 | Upload with `FAKE_SENSORS 1`, only the relay wired | Serial shows `[mqtt] connected`; LED on; dashboard online · wifi |
-| C2 | Dashboard → *"turn the pump on"*, then *"off"* | Relay clicks on, then off; Serial shows `[cmd]` and `[pump]` lines |
-| C3 | *"run the pump for 1 minute"*, then unplug the router | Relay still clicks off after 1 minute |
-| C4 | Wire the real sensors, `FAKE_SENSORS 0`; dip the soil probe in water | Soil moisture rises toward 100% within 10 seconds |
-| C5 | Lower the tank below `MIN_WATER_PCT` (or lift the float) while the pump runs | Pump stops; Serial says `dry-run protection` |
-| C6 | Reset the ESP32 while the pump is on | Pump stays OFF after reboot |
-
-### D. Real phone call
-
-| # | Do | Expect |
-|---|---|---|
-| D1 | Call the Twilio number from a verified phone | Language menu in 5 languages |
-| D2 | Press 1, say *"what's the soil moisture?"* | Spoken answer with the percentage within a few seconds |
-| D3 | *"Run the pump for 10 minutes"* | Relay on; spoken confirmation; turns off after 10 minutes |
-| D4 | Stay silent twice | "Sorry, I did not hear you"; after the third silence the call ends politely |
-| D5 | Press 3 during the call, say *"పంపు ఆపు"* (stop the pump) | Switches to Telugu; pump OFF; reply in Telugu |
-| D6 | Hang up and call again | Menu skipped; greeted in Telugu |
-| D7 | *"Thank you, bye"* | Goodbye, call ends |
-| D8 | With `ALLOWED_CALLERS` set, call from another phone | "This number is not registered", then hang-up |
-
-### Demo script for the video (about 60 seconds)
-
-1. Show the farm setup and the dashboard side by side.
-2. Call from a basic phone and pick Hindi or Telugu.
-3. *"What's the soil moisture?"*: the assistant reads it out and says the field is dry.
-4. *"Run the pump for 10 minutes"*: the relay clicks and the pump starts; the dashboard shows the countdown.
-5. *"Battery and solar?"*: it reads out the voltages.
-6. *"Stop the pump"*, then *"thank you"*: the pump stops and the call ends.
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
+| Part | Rupees (rough) |
 |---|---|
-| Call says "an application error has occurred" | Check the ngrok window for the request. Make sure the webhook is `.../voice/incoming` with **POST** and `npm start` is running. A `403` means `PUBLIC_URL` doesn't match the ngrok address; fix it, or set `VALIDATE_TWILIO=false` while testing |
-| Assistant always says the controller is offline | `DEVICE_ID`, `MQTT_TOPIC_PREFIX` and the broker must match in `config.h` and `.env`. Check Serial Monitor for `[mqtt] connected` |
-| Speech not recognised well | Speak after the prompt ends. Mixed words like "pump on" work in every language. Check the server log line `heard: "..."` to see what Twilio transcribed |
-| SIM module keeps restarting | Power supply: see the power notes above |
-| `ANTHROPIC_API_KEY is not set` in the log | Put the key in `backend/.env`; until then the keyword fallback answers |
+| Solar panel 15 W | 1,000 |
+| 12 V pump and relay | 800 |
+| 12 V battery 7 Ah | 800 |
+| SIM800L GSM module | 500 |
+| ESP32 board | 450 |
+| Soil sensors x2 | 400 |
+| Charge controller | 350 |
+| Float switches x2 | 250 |
+| Buck converter | 80 |
+| **Total** | **about 4,630** |
 
-## Security notes
+These are planning estimates, not quotes. Confirm prices before ordering. Running costs (Twilio number and call minutes, the AI API, SIM data) come on top.
 
-- The public HiveMQ broker is shared by everyone. Anyone who guesses your `DEVICE_ID` could send commands, so use a long, random ID. For a real deployment, use a private broker with a username and password (HiveMQ Cloud has a free tier): set `MQTT_TLS 1`, port 8883 and the credentials in `config.h`, and `MQTT_URL=mqtts://<host>:8883` plus `MQTT_USERNAME` and `MQTT_PASSWORD` in `.env`.
-- Set `ALLOWED_CALLERS` so only the farmer's phones can control the pump, and `API_TOKEN` before exposing the dashboard.
-- Keep `.env` out of git (it is in `.gitignore`).
+## What the farmer can say
+
+| Say (in any of the 5 languages) | What happens |
+|---|---|
+| "What's the soil moisture?" / "Status?" | Reads out moisture, pump state, auto mode, floats, battery and solar voltage |
+| "Run the pump for 10 minutes" → "Yes" | Reads the request back; starts only after the yes; stops itself after 10 minutes |
+| "Turn the pump on" → "Yes" | Same, with the default 20-minute run |
+| "Stop the pump" | Stops at once; auto mode pauses for an hour |
+| "Turn auto mode on/off" | Switches automatic watering (turning it on needs a yes) |
+| "Will it rain tomorrow?" | Forecast for the farm's location |
+
+## Evaluation plan
+
+Proposed pass targets. Agree final values with your guide before testing.
+
+| Test | Pass target |
+|---|---|
+| Sensor accuracy vs weighed, oven-dried soil sample | Within 5 percentage points after calibration |
+| Auto start and stop | Correct in 10 of 10 cycles |
+| Voice and SMS command | Under 30 s, and never without a yes |
+| Safety cut-offs (timer, floats, dry-run) | Pump stops every time in 10 trials |
+| Offline operation | Auto mode still works with the network unplugged |
+| Solar supply | Panel output covers the daily pump run |
+
+Record results in `docs/evaluation_results_template.csv`.
+
+## Safety
+
+Reported incidents in Telangana (a snakebite during a power cut, an electrocution at a farm well) motivate the design: start and stop the pump by phone instead of walking to it in the dark. The bench build stays at 12 V.
+
+## Sources for the numbers in the deck
+
+- PM-KUSUM Component B target of 14 lakh standalone solar pumps: Rajya Sabha reply, February 2025.
+- Share of groundwater extraction used in agriculture (CGWB), drip-irrigation savings of 30-60 percent, and the small and marginal landholder share (NSSO 2014): secondary summaries. Verify against the original reports before formal use.
+
+## Licence
+
+Code and documents: MIT, see `LICENSE`. Photos and video clips keep their own licences, see `media/CREDITS.md`.

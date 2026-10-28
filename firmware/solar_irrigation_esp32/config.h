@@ -26,7 +26,7 @@
 // MQTT_PORT 8883, and the username/password; the backend then uses MQTT_URL=mqtts://<host>:8883.
 #define MQTT_HOST     "broker.hivemq.com"
 #define MQTT_PORT     1883
-#define MQTT_TLS      0         // 1 = encrypted connection (server certificate is not verified)
+#define MQTT_TLS      0         // 1 = encrypted connection, Wi-Fi only (server certificate is not verified)
 #define MQTT_USER     ""
 #define MQTT_PASS     ""
 #define MQTT_TOPIC_PREFIX "solarirrigation"
